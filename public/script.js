@@ -1,10 +1,8 @@
-const CLIENT_ID =
-  "251974022404-5loc0451c8q7q6hh2pds8i50lan6h0s6.apps.googleusercontent.com";
+const CLIENT_ID = "251974022404-5loc0451c8q7q6hh2pds8i50lan6h0s6.apps.googleusercontent.com";
 const API_KEY = "AIzaSyD0a5-egT1IDNaoYljATmUUiPqPVFUwk7Q";
 
 // Discovery doc URL for APIs used by the quickstart
-const DISCOVERY_DOC =
-  "https://www.googleapis.com/discovery/v1/apis/gmail/v1/rest";
+const DISCOVERY_DOC = "https://www.googleapis.com/discovery/v1/apis/gmail/v1/rest";
 
 // Authorization scopes required by the API; multiple scopes can be
 // included, separated by spaces.
@@ -14,7 +12,8 @@ let tokenClient;
 let gapiInited = false;
 let gisInited = false;
 
-document.getElementById("authorize_button").style.visibility = "hidden";
+// Initially hide the input container
+document.getElementById("search_input_container").style.display = "none";
 document.getElementById("signout_button").style.visibility = "hidden";
 
 /**
@@ -68,6 +67,7 @@ function handleAuthClick() {
       throw resp;
     }
     document.getElementById("signout_button").style.visibility = "visible";
+    document.getElementById("search_input_container").style.display = "block"; // Show the input container
     document.getElementById("authorize_button").innerText = "Refresh";
     await listLabels();
   };
@@ -91,8 +91,10 @@ function handleSignoutClick() {
     google.accounts.oauth2.revoke(token.access_token);
     gapi.client.setToken("");
     document.getElementById("content").innerText = "";
+    document.getElementById("search_results").innerText = ""; // Clear search results
     document.getElementById("authorize_button").innerText = "Authorize";
     document.getElementById("signout_button").style.visibility = "hidden";
+    document.getElementById("search_input_container").style.display = "none"; // Hide the input container
   }
 }
 
@@ -100,25 +102,75 @@ function handleSignoutClick() {
  * Print all Labels in the authorized user's inbox. If no labels
  * are found an appropriate message is printed.
  */
-async function listLabels() {
-  let response;
-  try {
-    response = await gapi.client.gmail.users.labels.list({
-      userId: "me",
-    });
-  } catch (err) {
-    document.getElementById("content").innerText = err.message;
-    return;
+async function searchForEmails(service, user_id, search_query) {
+  const results = await gapi.client.gmail.users.messages.list({
+    userId: user_id,
+    q: search_query,
+  });
+
+  const messages = results.result.messages || [];
+  return messages;
+}
+
+async function getEmailDetails(service, user_id, message_id) {
+  const message = await gapi.client.gmail.users.messages.get({
+    userId: user_id,
+    id: message_id,
+  });
+
+  const headers = message.result.payload.headers;
+  const fromHeader = headers.find(header => header.name === 'From');
+  const timeSent = new Date(parseInt(message.result.internalDate)).toLocaleDateString('en-GB');
+  const body = message.result.snippet;
+
+  return {
+    from: fromHeader ? fromHeader.value : 'Unknown',
+    timeSent: timeSent,
+    body: body,
+  };
+}
+
+function extractLinks(text) {
+  const linkPattern = /http[s]?:\/\/(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+/g;
+  const links = text.match(linkPattern) || [];
+  return links;
+}
+
+async function handleSearchClick() {
+  const searchQuery = document.getElementById("search_input").value.trim();
+  if (searchQuery !== "") {
+    // Clear previous search results
+    document.getElementById("search_results").innerHTML = "";
+
+    const user_id = "me";
+    const messages = await searchForEmails(gapi.client.gmail.users.messages, user_id, searchQuery);
+
+    if (messages.length === 0) {
+      document.getElementById("search_results").innerText = "No emails found.";
+      return;
+    }
+
+    const searchResultsElement = document.getElementById("search_results");
+
+    for (const message of messages) {
+      const messageDetails = await getEmailDetails(gapi.client.gmail.users.messages, user_id, message.id);
+      const emailContent = `
+        <div>
+          <p><strong>From:</strong> ${messageDetails.from}</p>
+          <p><strong>Time sent:</strong> ${messageDetails.timeSent}</p>
+          <p><strong>Links in the mail:</strong></p>
+          <ul>
+            ${extractLinks(messageDetails.body)
+              .map(link => `<li><a href="${link}" target="_blank">${link}</a></li>`)
+              .join("")}
+          </ul>
+        </div>
+      `;
+
+      const emailDiv = document.createElement("div");
+      emailDiv.innerHTML = emailContent;
+
+      searchResultsElement.appendChild(emailDiv);
+    }
   }
-  const labels = response.result.labels;
-  if (!labels || labels.length == 0) {
-    document.getElementById("content").innerText = "No labels found.";
-    return;
-  }
-  // Flatten to string to display
-  const output = labels.reduce(
-    (str, label) => `${str}${label.name}\n`,
-    "Labels:\n",
-  );
-  document.getElementById("content").innerText = output;
 }
